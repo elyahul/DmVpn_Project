@@ -1,0 +1,13 @@
+{% extends 'base_spoke_config_j2' %}
+
+{% block bgp %}
+{% for neigbors in bgp %}
+{{ neigbors }}
+{% set as = neigbors.split()[3] %}
+{% if as |int  == asn |int %}
+ neighbor {{ neigbors.split()[1] }} soft-reconfiguration inbound
+{% endif %}
+{% endfor %}
+{% endblock %}
+
+

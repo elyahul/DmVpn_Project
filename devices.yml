@@ -1,0 +1,13 @@
+ 
+- device_type: cisco_ios
+  ip: 10.1.1.1
+  username: elil
+  password: cisco
+
+ 
+- device_type: cisco_ios
+  ip: 10.102.10.2
+  username: elil
+  password: cisco
+
+

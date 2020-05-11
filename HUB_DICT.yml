@@ -1,0 +1,3 @@
+SPOKE_IP: 10.102.10.2
+as_number: 20
+tunnel_ip: 10.202.10.2

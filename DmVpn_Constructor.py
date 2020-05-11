@@ -7,11 +7,25 @@ import threading
 from threading import Thread
 from jinja2 import FileSystemLoader,Environment
 from queue import Queue
-import time
+import time 
+from datetime import datetime
 from operator import itemgetter
-from threaded_ssh import send_show, threads_conn
+from threaded_ssh import send_config, threads_conn
 from pprint import pprint
+import logging
 
+logger = logging.getLogger("MyLog")
+logging.getLogger('paramiko').setLevel(logging.WARNING)
+formatter = logging.Formatter('## %(levelname)s LOG  %(threadName)s: %(message)s at %(asctime)s',
+                              datefmt='%H:%M:%S')
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+console.setFormatter(formatter)
+logger.addHandler(console)
+logger.setLevel(logging.INFO)
+
+##HUB_IP = '10.1.1.1'
+##SPOKE_IP = '10.102.10.2'
 HUB_IP = input('#Enter HUB device ip address:  ')
 SPOKE_IP = input('#Enter Spoke device ip address:  ')
 DEVICES_IP_LIST = [HUB_IP,SPOKE_IP]           
@@ -23,6 +37,8 @@ COMMAND_LIST = [
 
 with open('/home/elil/Yml/devices.yml') as f:
         devices = yaml.load(f, Loader= yaml.FullLoader)
+        
+################################################################################################
 
 def check_ip(ip):                                           ##Function to chek ip adress sanity
     try:
@@ -30,10 +46,7 @@ def check_ip(ip):                                           ##Function to chek i
     except ValueError as e:
         print('#Wrong Ip Address...',e)
         return False
-    
-for ip in DEVICES_IP_LIST:
-    check_ip(ip)
-    
+
 def create_yaml_file(file_path, row_data, arg):
     try:
         with open(file_path, arg) as f:
@@ -54,12 +67,12 @@ class Jinja_Config_Constructor():
         var_dict = yaml.load(open(self.data_dir), Loader = yaml.FullLoader)
         output = template.render(var_dict)
         return output
+
+'''Main Code Class. Connects to devices and returns configuration'''
     
 class Threads(threading.Thread):
     global mq
     mq = Queue()
-    
-    '''Main Code Class. Connects to devices and returns configuration'''
     def __init__(self):
         threading.Thread.__init__(self)
                
@@ -75,19 +88,19 @@ class Threads(threading.Thread):
     
     def queue_producer(self,*arg):
         mq.put(*arg, block=True)
-        time.sleep(1)
+        time.sleep(2)
         return mq
     
 def config_collector(params,command):
-    global _mq_dict
-    global _value_list
-                       
+    global mq_dict
+    for ip in DEVICES_IP_LIST:
+        check_ip(ip)
+        
     t = Threads()                                                  ## Initiate Thread class
     t.start()
-    print(f'## {t.name} started')
-    for dev_dict,command in zip(devices,COMMAND_LIST):
-        print(f'## Connecting to device {dev_dict["ip"]}...')
-        Session  = t.netmiko_ssh(dev_dict)
+    for device,command in zip(devices,COMMAND_LIST):
+        #logger.info('Is connecting to device {}'.format(device["ip"]))
+        Session  = t.netmiko_ssh(device)
         print('## Obtaining Device Configuration...')
         if len(command) == 1:
             t.queue_producer(Session(*command))
@@ -103,19 +116,17 @@ def config_collector(params,command):
     x = 0
     while not mq.empty():
         _value_list.append(mq.get(timeout=2))
-        pprint(_value_list[x])
-        x = x +1
-        
-    _mq_dict = dict(zip(_key_list,_value_list))                       ## define intermediate dict               
-    return _mq_dict    
+
+    mq_dict = dict(zip(_key_list,_value_list))                       ## define intermediate dict               
+    return mq_dict    
         
 def config_parser():
     global  hub_dict, spoke_dict, bgp_dict  ## define global variables for YAML file 
     bgp_neigbors = []                       ## List of Hub Current BGP Neigbors
     bgp_dict = {'bgp':bgp_neigbors}         ## Bgp Neigbors Dictionary(For Yaml)
 
-    for key,value in _mq_dict.items():
-        globals().update(_mq_dict)
+    for key,value in mq_dict.items():
+        globals().update(mq_dict)
         
     ''' Get Data from Hub Configuration and create Yaml File '''
 
@@ -131,17 +142,15 @@ def config_parser():
                 octet2 = int(ip[3:6])+100
                 tunnel_ip = ip.replace(ip[3:6],str(octet2))
                 asn = int(ip[5:6])*10
-                #tunnel_ip = '10.{}.10.2'.format(int(ip[3:6])+100)
                 interface = iface
             else:
                 network = ip
-    global nexthop            
     for line in sir_str.splitlines():
         if line.startswith('S*'):
             *junk,nexthop = line.split()
     
     ''' Create Spoke dictionary for Yaml File '''
-    global spoke_dict
+    
     spoke_dict = {'description': 'To_HUB',
                   'hostname': hostname.split()[1],
                   'tunnel_ip':tunnel_ip,
@@ -167,20 +176,18 @@ if __name__ == '__main__':
     create_yaml_file(r'/home/elil/Yml/SPOKE_DICT.yml', bgp_dict, 'w')
     create_yaml_file(r'/home/elil/Yml/SPOKE_DICT.yml', spoke_dict, 'a')
     create_yaml_file(r'/home/elil/Yml/HUB_DICT.yml', hub_dict, 'w')
-
     spoke_jinja_cfg = Jinja_Config_Constructor(r'/home/elil/Templates/',
                                                r'child_spoke_config_j2',
                                                r'/home/elil/Yml/SPOKE_DICT.yml')              
     hub_jinja_cfg   = Jinja_Config_Constructor(r'/home/elil/Templates/',
                                                r'hub_config_j2',
                                                r'/home/elil/Yml/HUB_DICT.yml')
-    
     spoke_cfg = []                                         ## define final config list for SPOKE
     hub_cfg = []                                           ## define final config list for HUB
     [spoke_cfg.append(line) for line in spoke_jinja_cfg.constructor().splitlines()] # spoke final cfg
     [hub_cfg.append(line) for line in hub_jinja_cfg.constructor().splitlines()]     # hub final cfg
     cfg_list = [spoke_cfg, hub_cfg]
-    threads_conn(send_show, devices, 2, cfg_list)
+    threads_conn(send_config, devices, 2, cfg_list)
 
 
 

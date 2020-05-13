@@ -5,7 +5,7 @@ router bgp 1
   neighbor {{ tunnel_ip }} default-originate
 !
 
-ip route {{ spoke_ip }} 255.255.255.252 10.107.1.1 
+ip route {{ SPOKE_IP }} 255.255.255.252 10.107.1.1 
 
 
 

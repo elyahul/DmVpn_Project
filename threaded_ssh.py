@@ -11,7 +11,7 @@ from contracts import contract
 
 logger = logging.getLogger("MyLog")
 logging.getLogger('paramiko').setLevel(logging.WARNING)
-formatter = logging.Formatter('## %(levelname)s LOG  %(threadName)s: %(message)s at %(asctime)s',
+formatter = logging.Formatter('## %(levelname)s LOG:  %(threadName)s   %(message)s Current time is: %(asctime)s',
                               datefmt='%H:%M:%S')
 console = logging.StreamHandler()
 console.setLevel(logging.INFO)
@@ -22,14 +22,14 @@ logger.setLevel(logging.INFO)
 @contract(cfg = 'str[>0]', kwargs = dict)
 def send_show(kwargs, cfg):
     with ConnectHandler(**kwargs) as ssh:
-        logger.info('Is connecting to device {}'.format(device["ip"]))
+        logger.info('Is connecting to remote device ')
         result = ssh.send_command(cfg)
         return result
 
 @contract(cfg = 'list[>0]', kwargs = dict)
 def send_config(kwargs, cfg):
     with ConnectHandler(**kwargs) as ssh:
-        logger.info('Is connecting to device {}'.format(device["ip"]))
+        logger.info('is connecting to remote device.')
         result = ssh.send_config_set(cfg)
     return result
 
@@ -40,10 +40,10 @@ def threads_conn(foo, device_list, limit, cfg_list):
         futures = []
         for device,cfg in zip(device_list, cfg_list) :
             futures.append(executor.submit(foo, device, cfg))
-            logger.info('Device {} configuration is completed at'.format(device["ip"]))
         for future in as_completed(futures):
             try:
                 output_list.append(future.result())
+                logger.info('finished configuration tasks ')
             except NetMikoAuthenticationException as err:
                 print(future.exception())
         return output_list

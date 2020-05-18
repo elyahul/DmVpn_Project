@@ -5,41 +5,24 @@ import ipaddress
 import time
 from tkinter import messagebox
 from tkinter import simpledialog
-import logging
 import yaml
 import netmiko
+import threading
+from threading import Thread
 from netmiko import ConnectHandler, NetMikoTimeoutException, NetMikoAuthenticationException
 import sys
 import ipaddress
-import threading
-from threading import Thread
 from jinja2 import FileSystemLoader,Environment
 from queue import Queue
-import time 
 from datetime import datetime
 from operator import itemgetter
-from threaded_ssh import send_config, threads_conn
-from pprint import pprint
+from threaded_ssh_gui import send_config, threads_conn
+
 
 Hub_IP = ''
 Spoke_IP = ''
-
-
-logger = logging.getLogger("MyLog")
-logging.getLogger('paramiko').setLevel(logging.WARNING)
-formatter = logging.Formatter('%(threadName)s: %(message)s at %(asctime)s',
-                              datefmt='%H:%M:%S')
-console = logging.StreamHandler()
-console.setLevel(logging.INFO)
-console.setFormatter(formatter)
-logger.addHandler(console)
-logger.setLevel(logging.INFO)
-
 HUB_IP = '10.1.1.1'
 SPOKE_IP = '10.102.10.2'
-##HUB_IP = input('#Enter HUB device ip address:  ')
-##SPOKE_IP = input('#Enter Spoke device ip address:  ')
-
 
 COMMAND_LIST = [
         ('show run | s bgp'),
@@ -47,15 +30,9 @@ COMMAND_LIST = [
          'show ip interface brief',
          'show run | include hostname'),]
 
-with open('/home/elil/Yml/devices.yml') as f:          #open file with device dictionary
+with open('/home/elil/Yml/devices.yml') as f:        
         devices = yaml.load(f, Loader= yaml.FullLoader)
         
-'''Main  Class. Connects to devices and returns configuration'''
-##class Threads(threading.Thread):
-##    def __init__(self):
-##        threading.Thread.__init__(self)
-               
-
 class MainFrame():
     def __init__(self):
         self.root = tk.Tk()
@@ -87,7 +64,7 @@ class MainFrame():
         
         self.txtvar = tk.StringVar()
         self.txtvar.set('Please Input Hub and Spoke Ip Addresses')
-        self.message = tk.Message(self.frame_body, width=350, bd=10, bg='lightgreen',
+        self.message = tk.Message(self.frame_body, width=350, bd=10, bg='#e1d8a1',
                                   relief=tk.RIDGE, textvariable=self.txtvar, font=('Arial', 12, 'bold'))
         self.message.grid(row=1, columnspan=2, padx=10, pady=(5))
         
@@ -95,11 +72,17 @@ class MainFrame():
         self.clear_button.grid(row=2, column=1, padx=3, pady=(20,5), sticky = 'w')
         self.submit_button = ttk.Button(self.frame_body, text='Submit', command=self.submit_ip)
         self.submit_button.grid(row=2, column=0, padx=5, pady=(20,5), sticky = 'e')
-        self.root.bind(u'<Escape>', self.destroy_self)
-        self.root.mainloop()
+        self.root.bind('<Escape>', func=self.destroy_self)
         
+        self.root.mainloop()
 
-    def config_collector(self,params,commands):
+    def netmiko_ssh(self, args):                # main function for ssh connection 
+        self.ssh = ConnectHandler(**args)
+        def send_show(command):
+            return self.ssh.send_command(command)    
+        return send_show
+        
+    def config_collector(self,params,commands): # funtion collets data from devices
         self.root.iconify()
         global mq_dict
         queue = Queue()
@@ -110,30 +93,25 @@ class MainFrame():
                     self.root.destroy()
                     sys.exit()
                 Session = self.netmiko_ssh(device)         # connects to device
-                self.root.lift()                          
-                self.root.focus_force()
-               
-                #tk.messagebox.showinfo(message=f'Obtaining device {device["ip"]} configuration ...')
                 if type(command) == str:
                     queue.put(Session(command))            # gets device configuration
                 else:
                     for cfg in command:
                         queue.put(Session(cfg))         # add device output to the queue
-                        time.sleep(1)
             except  NetMikoAuthenticationException as err:
                 tk.messagebox.showerror(message=err)
             except  NetMikoTimeoutException as err:
                 tk.messagebox.showerror(message=err)
                 
-        _value_list = []                                   # define values list
-        _key_list = ['hub_bgp_list', 'sir_str' , 'sib_str', 'hostname'] # define keys list
+        value_list = []                                   # define values list
+        key_list = ['hub_bgp_list', 'sir_str' , 'sib_str', 'hostname'] # define keys list
         while not queue.empty():
-            _value_list.append(queue.get(timeout=2))       # get data from the queue
-
-        mq_dict = dict(zip(_key_list,_value_list))         # define intermediate dict               
+            value_list.append(queue.get(timeout=2))       # get data from the queue
+        mq_dict = dict(zip(key_list, value_list))         # define intermediate dict               
         return mq_dict
     
-    def config_parser(self):
+    @staticmethod
+    def config_parser():
         global  hub_dict, spoke_dict, bgp_dict  ## define global variables for YAML file 
         bgp_neigbors = []                       ## List of Hub Current BGP Neigbors
         bgp_dict = {'bgp':bgp_neigbors}         ## Bgp Neigbors Dictionary(For Yaml)
@@ -150,7 +128,7 @@ class MainFrame():
             if (ip != 'unassigned' and  (status and proto == 'up')):
                 if not (iface.startswith('L') or iface.startswith('T')):
                     octet2 = int(ip[3:6])+100
-                    tunnel_ip = ip.replace(ip[3:6],str(octet2))
+                    tunnel_ip = '10.{}.10.1'.format(octet2)
                     asn = int(ip[5:6])*10
                     interface = iface
                 else:
@@ -176,12 +154,6 @@ class MainFrame():
         tk.messagebox.showinfo(message='Finalizing configuration ...')
         return spoke_dict, hub_dict, bgp_dict
 
-    def netmiko_ssh(self, args):
-        self.ssh = ConnectHandler(**args)
-        def send_show(*command):
-            return self.ssh.send_command(*command)    
-        return send_show
-        
     def destroy_self(self, event=None):
         self.root.destroy()
         
@@ -211,13 +183,15 @@ class MainFrame():
             time.sleep(0.5)
             result = tk.messagebox.askyesno(message="Ip's are Accepted\n  Continue?")
             if result == False:
-                self.destroy_self()         # exit program if "Cancel" button pressed 
-                sys.exit()
+                self.txtvar.set('Please Input Hub and Spoke Ip Addresses')
+                self.root.lift()         # exit program if "Cancel" button pressed 
+                self.root.focus_forse()
             else:
+                self.txtvar.set('Please Input Hub and Spoke Ip Addresses')
                 self.config_collector(devices, COMMAND_LIST)
-                #print('stage0') Collects data from devies
+                #print('stage0') #Collects data from devies
                 self.config_parser()
-                #print('stage1') Parses data
+                #print('stage1') # Parses data
                 spoke_jinja_cfg = Files_Constructor(r'/home/elil/Yml/SPOKE_DICT.yml')
                 #print("stage2") Calling Files_Constructor class for spoke rtr
                 hub_jinja_cfg = Files_Constructor(r'/home/elil/Yml/HUB_DICT.yml')
@@ -231,19 +205,19 @@ class MainFrame():
                 self.result1 = spoke_jinja_cfg.constructor(r"/home/elil/Templates/", r'child_spoke_config_j2')
                 #print("stage7") Create Spoke configuration template with Jinja2
                 self.result2 = hub_jinja_cfg.constructor(r"/home/elil/Templates/", r'hub_config_j2')
-                #print("stage8") Create Hub configuration template with Jinja2
+                #print("stage8") # Create Hub configuration template with Jinja2
                 self.cfg_compile()
+                #print("stage8.5") # Send configuration to devices
                 threads_conn(send_config, devices, 2, self.cfg_list)
                 proceed = messagebox.askyesno(message='Spoke device is added to DmVpn cloud. Would you like to configure next device ?')
-##                if proceed == True:
-##                    self.panedwindow.deiconify()                          
-##                    self.panedwindow.focus_set()
-##                else:
-##                    self.root.quit()                          
-                                    
+                if proceed == True:
+                    self.root.lift()                          
+                    self.root.focus_force()
+                else:
+                    self.root.destroy()                          
                 return  Hub_IP, Spoke_IP
         return flag
-
+    
     def cfg_compile(self):
         spoke_cfg = []    # define final config list for SPOKE
         hub_cfg = []      # define final config list for HUB
@@ -251,7 +225,7 @@ class MainFrame():
         #print("stage7")  # SPOKE final configuration
         [hub_cfg.append(line) for line in self.result2.splitlines()]   
         #print("stage8")  # HUB final configuration
-        self.cfg_list = [spoke_cfg, hub_cfg]
+        self.cfg_list = [hub_cfg, spoke_cfg]
         return self.cfg_list 
     
     @staticmethod

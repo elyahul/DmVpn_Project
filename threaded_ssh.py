@@ -5,18 +5,12 @@ import sys
 from itertools import repeat
 import logging
 from netmiko import ConnectHandler
-from netmiko import NetMikoAuthenticationException
+from netmiko import NetMikoAuthenticationException, NetMikoTimeoutException
 import yaml
 from contracts import contract
 
 logger = logging.getLogger("MyLog")
 logging.getLogger('paramiko').setLevel(logging.WARNING)
-formatter = logging.Formatter('## %(levelname)s LOG:  %(threadName)s   %(message)s Current time is: %(asctime)s',
-                              datefmt='%H:%M:%S')
-console = logging.StreamHandler()
-console.setLevel(logging.INFO)
-console.setFormatter(formatter)
-logger.addHandler(console)
 logger.setLevel(logging.INFO)
 
 @contract(cfg = 'str[>0]', kwargs = dict)
@@ -45,6 +39,8 @@ def threads_conn(foo, device_list, limit, cfg_list):
                 output_list.append(future.result())
                 logger.info('finished configuration tasks ')
             except NetMikoAuthenticationException as err:
+                print(future.exception())
+            except NetMikoTimeoutException as err:
                 print(future.exception())
         return output_list
 

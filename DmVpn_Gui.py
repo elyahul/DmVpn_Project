@@ -26,10 +26,6 @@ COMMAND_LIST = [
          'show ip interface brief',
          'show run | include hostname'),]
 
-##class Threads(threading.Thread):
-##    def __init__(self):
-##        threading.Thread.__init__(self)
-
 class MainFrame():
     def __init__(self):
         self.root = tk.Tk()
@@ -72,11 +68,10 @@ class MainFrame():
         self.root.bind('<Escape>', func=self.destroy_self)
         self.root.bind("<Return>", func=self.submit_ip)
         self.root.bind("<KP_Enter>", func=self.submit_ip)
-               
-        self.root.mainloop(n=500)
+        self.root.mainloop()
         
-    @staticmethod
-    def check_ip(ip):                   # Function to chek ip adress sanity
+    @staticmethod                       # Function to chek ip adress sanity
+    def check_ip(ip):                   
         try:
             ipaddress.ip_address(ip)
             return True
@@ -84,13 +79,13 @@ class MainFrame():
             tk.messagebox.showerror(title="Input Error", message=err)
             return False
       
-    @staticmethod                       # Function to chek ip adress sanity
-    def pingable(ip):
+                         
+    def pingable(self, ip):             # function to check device reachability
+        self.retry = None
         try:
             result = subprocess.call(["ping", "-c 1", ip], stdout=subprocess.PIPE)
             if result == 1:
-                tk.messagebox.showinfo(message=f"Device {ip} is not reachable !!!")
-                tk.messagebox.askretrycancel(message="Retry?  Quit Application?")
+                tk.messagebox.showinfo(message=f"Device {ip} is unreachable !!!")
         except  SubprocessError as err:
             tk.messagebox.showinfo(message=err)
         return result
@@ -103,6 +98,8 @@ class MainFrame():
         self.spoke_entry.delete(0, 'end')
 
     def submit_ip(self, event=None):
+        COUNT = 0
+        global Hub_Ip, Spoke_Ip
         flag = True
         Hub_Ip = self.hub_entry.get()
         if self.check_ip(Hub_Ip) == False:
@@ -131,38 +128,38 @@ class MainFrame():
                 self.message.grid(row=1, columnspan=2, padx=80, pady=5)
                 self.txtvar.set(' Exiting  application ..')
                 self.root.after(2000, self.root.destroy)
-        
-        for device in devices:                          # check basic connectivity to devices
+              
+        for device in devices:                             # check connectivity to devices
             reachable = self.pingable(device["ip"])
-        if reachable == 0:        
-            self.config_collector(devices, COMMAND_LIST) #Collects data from devies
-            # Device output parser
-            self.config_parser()
-            # Calling Files_Constructor class for Spoke Rtr
-            spoke_jinja_cfg = Files_Constructor(r'/home/elil/Yml/SPOKE_DICT.yml')
-            # Calling Files_Constructor class for Hub Rtr
-            hub_jinja_cfg = Files_Constructor(r'/home/elil/Yml/HUB_DICT.yml')
-            # Configuring YAML file for Spoke
-            spoke_jinja_cfg.create_yaml_file(bgp_dict, 'w')
-            # Configuring YAML file for Spoke
-            spoke_jinja_cfg.create_yaml_file(spoke_dict, 'a')
-            # Configuring YAML file for Hub
-            hub_jinja_cfg.create_yaml_file(hub_dict, 'w')
-            # Create Spoke configuration template with Jinja2 
+            COUNT += reachable
+        if COUNT == 0:                                    
+            self.config_collector(devices, COMMAND_LIST)       # collects data from devies
+            self.config_parser()                               # parses data
+            spoke_jinja_cfg = Files_Constructor(r'/home/elil/Yml/SPOKE_DICT.yml') # Instaniate Class
+            hub_jinja_cfg = Files_Constructor(r'/home/elil/Yml/HUB_DICT.yml')     # Instaniate Class
+            spoke_jinja_cfg.create_yaml_file(bgp_dict, 'w')    # Configuring YAML file for Spoke
+            spoke_jinja_cfg.create_yaml_file(spoke_dict, 'a')  # Configuring YAML file for Spoke
+            hub_jinja_cfg.create_yaml_file(hub_dict, 'w')      # Configuring YAML file for Hub
+            # Create Spoke configuration template with Jinja2
             self.result1 = spoke_jinja_cfg.constructor(r"/home/elil/Templates/", r'child_spoke_config_j2')
             # Create Hub configuration template with Jinja2
             self.result2 = hub_jinja_cfg.constructor(r"/home/elil/Templates/", r'hub_config_j2')
-            # Compile configuration for both devices
-            self.cfg_compile()
-            # Send configuration to devices
-            threads_conn(send_config, devices, 2, self.cfg_list)
-            # ask for program termination
-            proceed = messagebox.askyesno(message='Spoke device is added to DmVpn cloud. Would you like to configure more devices ?')
+            self.cfg_compile()                                 # finalizing configuration of devices
+            threads_conn(send_config, devices, 2, self.cfg_list)    # send configuration to devices
+            proceed = messagebox.askyesno(message='Spoke device is added to DmVpn cloud. Would you like to configure next device ?')
             if proceed == True:
                 self.root.lift()                          
                 self.root.focus_force()
             else:
-                self.root.destroy()                          
+                self.root.destroy()
+        else:
+            self.clear_entry()
+            self.retry = tk.messagebox.askretrycancel(message="Retry?  Quit Application?")
+            if self.retry == True:
+                self.clear_entry()
+                self.txtvar.set("Check devices reachability before input")
+            else:
+                self.root.destroy()
         return Hub_Ip, Spoke_Ip
     
     def netmiko_ssh(self, args):               # main function for ssh connection 
@@ -196,7 +193,6 @@ class MainFrame():
         key_list = ['hub_bgp_list', 'sir_str' , 'sib_str', 'hostname'] # define keys list
         while not queue.empty():
             value_list.append(queue.get(timeout=2))       # get data from the queue
-            
 
         mq_dict = dict(zip(key_list, value_list))         # define intermediate dict               
         return mq_dict
@@ -239,64 +235,7 @@ class MainFrame():
                     'as_number': as_number}
         tk.messagebox.showinfo(message='Finalizing configuration ...')
         return spoke_dict, hub_dict, bgp_dict
-
-    def submit_ip(self, event=None):
-        global Hub_Ip, Spoke_Ip
-        flag = True
-        Hub_Ip = self.hub_entry.get()
-        if self.check_ip(Hub_Ip) == False:
-            self.clear_entry()
-            self.txtvar.set("Please Try Again. Input the correct  Ip's")
-            flag = False
-        else:
-            Spoke_Ip = self.spoke_entry.get()
-            if self.check_ip(Spoke_Ip) == False:
-                self.clear_entry()
-                self.txtvar.set("Please Try Again. Input the correct  Ip's")
-                flag = False
-        if flag == True:
-            key_list=['device_type', 'ip', 'username', 'password']
-            listglobal=['cisco_ios', 'elil', 'cisco']
-            listglobal.insert(1, Hub_Ip)
-            listglobal1=['cisco_ios', 'elil', 'cisco']
-            listglobal1.insert(1, Spoke_Ip)
-            device1 = dict(zip(key_list,listglobal))    # define dictionary for devices 
-            device2 = dict(zip(key_list,listglobal1))
-            devices=[device1,device2]                     
-            self.txtvar.set("Ip's are accepted. Starting application ...")
-            time.sleep(0.5)
-            result = tk.messagebox.askyesno(message="Ip's are Accepted\n  Continue?")
-            if result == False:        # exit program if "No" button pressed 
-                self.message.grid(row=1, columnspan=2, padx=80, pady=5)
-                self.txtvar.set(' Exiting  application ..')
-                self.root.after(2000, self.root.destroy)
-        
-        for device in devices:         # check basic connectivity to devices
-            reachable = self.pingable(device["ip"])
-        if reachable == 0:                                     # start program execution
-            self.config_collector(devices, COMMAND_LIST)       # Collects data from devies
-            self.config_parser()                               # Parses data
-            spoke_jinja_cfg = Files_Constructor(r'/home/elil/Yml/SPOKE_DICT.yml') # Instaniate Class
-            hub_jinja_cfg = Files_Constructor(r'/home/elil/Yml/HUB_DICT.yml')     # Instaniate Class
-            spoke_jinja_cfg.create_yaml_file(bgp_dict, 'w')    # Configuring YAML file for Spoke
-            spoke_jinja_cfg.create_yaml_file(spoke_dict, 'a')  # Configuring YAML file for Spoke
-            hub_jinja_cfg.create_yaml_file(hub_dict, 'w')      # Configuring YAML file for Hub
-            # Create Spoke configuration template with Jinja2
-            self.result1 = spoke_jinja_cfg.constructor(r"/home/elil/Templates/", r'child_spoke_config_j2')
-            # Create Hub configuration template with Jinja2
-            self.result2 = hub_jinja_cfg.constructor(r"/home/elil/Templates/", r'hub_config_j2')
-            self.cfg_compile()                                 # Finalizing configurations
-            threads_conn(send_config, devices, 2, self.cfg_list)    # Send configuration to devices
-            proceed = messagebox.askyesno(message='Spoke device is added to DmVpn cloud. Would you like to configure next device ?')
-            if proceed == True:
-                self.root.lift()                          
-                self.root.focus_force()
-                self.clear_entry()
-            else:
-                self.root.destroy()                          
-        return Hub_Ip, Spoke_Ip
-        
-    
+ 
     def cfg_compile(self):
         spoke_cfg = []    # define final config list for Spoke
         hub_cfg = []      # define final config list for Hub

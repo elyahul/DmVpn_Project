@@ -17,12 +17,8 @@ from queue import Queue
 from datetime import datetime
 from operator import itemgetter
 from threaded_ssh_gui import send_config, threads_conn
-
-
-Hub_IP = ''
-Spoke_IP = ''
-HUB_IP = '10.1.1.1'
-SPOKE_IP = '10.102.10.2'
+import subprocess
+from  subprocess import SubprocessError
 
 COMMAND_LIST = [
         ('show run | s bgp'),
@@ -30,9 +26,10 @@ COMMAND_LIST = [
          'show ip interface brief',
          'show run | include hostname'),]
 
-with open('/home/elil/Yml/devices.yml') as f:        
-        devices = yaml.load(f, Loader= yaml.FullLoader)
-        
+##class Threads(threading.Thread):
+##    def __init__(self):
+##        threading.Thread.__init__(self)
+
 class MainFrame():
     def __init__(self):
         self.root = tk.Tk()
@@ -66,17 +63,109 @@ class MainFrame():
         self.txtvar.set('Please Input Hub and Spoke Ip Addresses')
         self.message = tk.Message(self.frame_body, width=350, bd=10, bg='#e1d8a1',
                                   relief=tk.RIDGE, textvariable=self.txtvar, font=('Arial', 12, 'bold'))
-        self.message.grid(row=1, columnspan=2, padx=10, pady=(5))
+        self.message.grid(row=1, columnspan=2, padx=10, pady=5)
         
         self.clear_button = ttk.Button(self.frame_body, text='Clear', command=self.clear_entry)
-        self.clear_button.grid(row=2, column=1, padx=3, pady=(20,5), sticky = 'w')
+        self.clear_button.grid(row=2, column=1, padx=5, pady=(12,5), sticky='w')
         self.submit_button = ttk.Button(self.frame_body, text='Submit', command=self.submit_ip)
-        self.submit_button.grid(row=2, column=0, padx=5, pady=(20,5), sticky = 'e')
+        self.submit_button.grid(row=2, column=0, padx=5, pady=(12,5), sticky='e')
         self.root.bind('<Escape>', func=self.destroy_self)
+        self.root.bind("<Return>", func=self.submit_ip)
+        self.root.bind("<KP_Enter>", func=self.submit_ip)
+               
+        self.root.mainloop(n=500)
         
-        self.root.mainloop()
+    @staticmethod
+    def check_ip(ip):                   # Function to chek ip adress sanity
+        try:
+            ipaddress.ip_address(ip)
+            return True
+        except ValueError as err:  
+            tk.messagebox.showerror(title="Input Error", message=err)
+            return False
+      
+    @staticmethod                       # Function to chek ip adress sanity
+    def pingable(ip):
+        try:
+            result = subprocess.call(["ping", "-c 1", ip], stdout=subprocess.PIPE)
+            if result == 1:
+                tk.messagebox.showinfo(message=f"Device {ip} is not reachable !!!")
+                tk.messagebox.askretrycancel(message="Retry?  Quit Application?")
+        except  SubprocessError as err:
+            tk.messagebox.showinfo(message=err)
+        return result
+    
+    def destroy_self(self, event=None):
+        self.root.destroy()
+        
+    def clear_entry(self):
+        self.hub_entry.delete(0, 'end')
+        self.spoke_entry.delete(0, 'end')
 
-    def netmiko_ssh(self, args):                # main function for ssh connection 
+    def submit_ip(self, event=None):
+        flag = True
+        Hub_Ip = self.hub_entry.get()
+        if self.check_ip(Hub_Ip) == False:
+            self.clear_entry()
+            self.txtvar.set("Please Try Again. Input the correct  Ip's")
+            flag = False
+        else:
+            Spoke_Ip = self.spoke_entry.get()
+            if self.check_ip(Spoke_Ip) == False:
+                self.clear_entry()
+                self.txtvar.set("Please Try Again. Input the correct  Ip's")
+                flag = False
+        if flag == True:
+            key_list=['device_type', 'ip', 'username', 'password']
+            listglobal=['cisco_ios', 'elil', 'cisco']
+            listglobal.insert(1, Hub_Ip)
+            listglobal1=['cisco_ios', 'elil', 'cisco']
+            listglobal1.insert(1, Spoke_Ip)
+            device1 = dict(zip(key_list,listglobal))    # define dictionary for devices 
+            device2 = dict(zip(key_list,listglobal1))
+            devices=[device1,device2]                     
+            self.txtvar.set("Ip's are accepted. Starting application ...")
+            time.sleep(0.5)
+            result = tk.messagebox.askyesno(message="Ip's are Accepted\n  Continue?")
+            if result == False:        # exit program if "No" button pressed 
+                self.message.grid(row=1, columnspan=2, padx=80, pady=5)
+                self.txtvar.set(' Exiting  application ..')
+                self.root.after(2000, self.root.destroy)
+        
+        for device in devices:                          # check basic connectivity to devices
+            reachable = self.pingable(device["ip"])
+        if reachable == 0:        
+            self.config_collector(devices, COMMAND_LIST) #Collects data from devies
+            # Device output parser
+            self.config_parser()
+            # Calling Files_Constructor class for Spoke Rtr
+            spoke_jinja_cfg = Files_Constructor(r'/home/elil/Yml/SPOKE_DICT.yml')
+            # Calling Files_Constructor class for Hub Rtr
+            hub_jinja_cfg = Files_Constructor(r'/home/elil/Yml/HUB_DICT.yml')
+            # Configuring YAML file for Spoke
+            spoke_jinja_cfg.create_yaml_file(bgp_dict, 'w')
+            # Configuring YAML file for Spoke
+            spoke_jinja_cfg.create_yaml_file(spoke_dict, 'a')
+            # Configuring YAML file for Hub
+            hub_jinja_cfg.create_yaml_file(hub_dict, 'w')
+            # Create Spoke configuration template with Jinja2 
+            self.result1 = spoke_jinja_cfg.constructor(r"/home/elil/Templates/", r'child_spoke_config_j2')
+            # Create Hub configuration template with Jinja2
+            self.result2 = hub_jinja_cfg.constructor(r"/home/elil/Templates/", r'hub_config_j2')
+            # Compile configuration for both devices
+            self.cfg_compile()
+            # Send configuration to devices
+            threads_conn(send_config, devices, 2, self.cfg_list)
+            # ask for program termination
+            proceed = messagebox.askyesno(message='Spoke device is added to DmVpn cloud. Would you like to configure more devices ?')
+            if proceed == True:
+                self.root.lift()                          
+                self.root.focus_force()
+            else:
+                self.root.destroy()                          
+        return Hub_Ip, Spoke_Ip
+    
+    def netmiko_ssh(self, args):               # main function for ssh connection 
         self.ssh = ConnectHandler(**args)
         def send_show(command):
             return self.ssh.send_command(command)    
@@ -91,13 +180,13 @@ class MainFrame():
                 self.result=tk.messagebox.askokcancel(message=f'Procced with connection to device {device["ip"]} ?')
                 if self.result==False:          # exit program if "Cancel" button pressed
                     self.root.destroy()
-                    sys.exit()
-                Session = self.netmiko_ssh(device)         # connects to device
+                Session = self.netmiko_ssh(device)      # connects to device
                 if type(command) == str:
-                    queue.put(Session(command))            # gets device configuration
+                    queue.put(Session(command))         # gets device configuration
                 else:
                     for cfg in command:
                         queue.put(Session(cfg))         # add device output to the queue
+                        
             except  NetMikoAuthenticationException as err:
                 tk.messagebox.showerror(message=err)
             except  NetMikoTimeoutException as err:
@@ -107,11 +196,12 @@ class MainFrame():
         key_list = ['hub_bgp_list', 'sir_str' , 'sib_str', 'hostname'] # define keys list
         while not queue.empty():
             value_list.append(queue.get(timeout=2))       # get data from the queue
+            
+
         mq_dict = dict(zip(key_list, value_list))         # define intermediate dict               
         return mq_dict
     
-    @staticmethod
-    def config_parser():
+    def config_parser(self):
         global  hub_dict, spoke_dict, bgp_dict  ## define global variables for YAML file 
         bgp_neigbors = []                       ## List of Hub Current BGP Neigbors
         bgp_dict = {'bgp':bgp_neigbors}         ## Bgp Neigbors Dictionary(For Yaml)
@@ -128,7 +218,7 @@ class MainFrame():
             if (ip != 'unassigned' and  (status and proto == 'up')):
                 if not (iface.startswith('L') or iface.startswith('T')):
                     octet2 = int(ip[3:6])+100
-                    tunnel_ip = '10.{}.10.1'.format(octet2)
+                    tunnel_ip = '10.{}.10.2'.format(octet2)
                     asn = int(ip[5:6])*10
                     interface = iface
                 else:
@@ -137,116 +227,97 @@ class MainFrame():
             if line.startswith('S*'):
                 *junk,nexthop = line.split()
         
-        ''' Create Spoke dictionary for Yaml File '''
-        spoke_dict = {'description': 'To_HUB',
-                      'hostname': hostname.split()[1],
-                      'tunnel_ip':tunnel_ip,
-                      'network':network,
-                      'interface':interface,
-                      'asn':asn,
-                      'nexthop':nexthop}
+        ''' Create Spoke router's dictionary for Yaml File '''
+        spoke_dict = {'description': 'To_HUB', 'hostname': hostname.split()[1],
+                      'tunnel_ip':tunnel_ip, 'network':network, 'asn':asn, 
+                      'interface':interface, 'nexthop':nexthop}
 
-        ''' Create Hub dictionary for Yaml File '''
-        as_number = int(SPOKE_IP.split('.')[1][2])*10    
-        hub_dict = {'SPOKE_IP': SPOKE_IP,
+        ''' Create Hub router's  dictionary for Yaml File '''
+        as_number = int(str(octet2)[-1])*10
+        hub_dict = {'Spoke_Ip': Spoke_Ip,
                     'tunnel_ip': tunnel_ip,
                     'as_number': as_number}
         tk.messagebox.showinfo(message='Finalizing configuration ...')
         return spoke_dict, hub_dict, bgp_dict
 
-    def destroy_self(self, event=None):
-        self.root.destroy()
-        
-    def clear_entry(self):
-        self.hub_entry.delete(0, 'end')
-        self.spoke_entry.delete(0, 'end')
-        
-    def submit_ip(self):
+    def submit_ip(self, event=None):
+        global Hub_Ip, Spoke_Ip
         flag = True
-        global Hub_IP, Spoke_IP 
-        Spoke_IP = Hub_IP = ''
-        Hub_IP = self.hub_entry.get()
-        if self.check_ip(Hub_IP) == False:
+        Hub_Ip = self.hub_entry.get()
+        if self.check_ip(Hub_Ip) == False:
             self.clear_entry()
-            self.txtvar.set('Try Again. Input the correct parameters')
+            self.txtvar.set("Please Try Again. Input the correct  Ip's")
             flag = False
         else:
-            Spoke_IP = self.spoke_entry.get()
-            if self.check_ip(Spoke_IP) == False:
+            Spoke_Ip = self.spoke_entry.get()
+            if self.check_ip(Spoke_Ip) == False:
                 self.clear_entry()
-                self.txtvar.set('Try Again. Input the correct parameters')
+                self.txtvar.set("Please Try Again. Input the correct  Ip's")
                 flag = False
         if flag == True:
-            self.clear_entry()
-            time.sleep(1)
-            self.txtvar.set("Ip's are accepted. Starting configuration ...")
+            key_list=['device_type', 'ip', 'username', 'password']
+            listglobal=['cisco_ios', 'elil', 'cisco']
+            listglobal.insert(1, Hub_Ip)
+            listglobal1=['cisco_ios', 'elil', 'cisco']
+            listglobal1.insert(1, Spoke_Ip)
+            device1 = dict(zip(key_list,listglobal))    # define dictionary for devices 
+            device2 = dict(zip(key_list,listglobal1))
+            devices=[device1,device2]                     
+            self.txtvar.set("Ip's are accepted. Starting application ...")
             time.sleep(0.5)
             result = tk.messagebox.askyesno(message="Ip's are Accepted\n  Continue?")
-            if result == False:
-                self.txtvar.set('Please Input Hub and Spoke Ip Addresses')
-                self.root.lift()         # exit program if "Cancel" button pressed 
-                self.root.focus_forse()
+            if result == False:        # exit program if "No" button pressed 
+                self.message.grid(row=1, columnspan=2, padx=80, pady=5)
+                self.txtvar.set(' Exiting  application ..')
+                self.root.after(2000, self.root.destroy)
+        
+        for device in devices:         # check basic connectivity to devices
+            reachable = self.pingable(device["ip"])
+        if reachable == 0:                                     # start program execution
+            self.config_collector(devices, COMMAND_LIST)       # Collects data from devies
+            self.config_parser()                               # Parses data
+            spoke_jinja_cfg = Files_Constructor(r'/home/elil/Yml/SPOKE_DICT.yml') # Instaniate Class
+            hub_jinja_cfg = Files_Constructor(r'/home/elil/Yml/HUB_DICT.yml')     # Instaniate Class
+            spoke_jinja_cfg.create_yaml_file(bgp_dict, 'w')    # Configuring YAML file for Spoke
+            spoke_jinja_cfg.create_yaml_file(spoke_dict, 'a')  # Configuring YAML file for Spoke
+            hub_jinja_cfg.create_yaml_file(hub_dict, 'w')      # Configuring YAML file for Hub
+            # Create Spoke configuration template with Jinja2
+            self.result1 = spoke_jinja_cfg.constructor(r"/home/elil/Templates/", r'child_spoke_config_j2')
+            # Create Hub configuration template with Jinja2
+            self.result2 = hub_jinja_cfg.constructor(r"/home/elil/Templates/", r'hub_config_j2')
+            self.cfg_compile()                                 # Finalizing configurations
+            threads_conn(send_config, devices, 2, self.cfg_list)    # Send configuration to devices
+            proceed = messagebox.askyesno(message='Spoke device is added to DmVpn cloud. Would you like to configure next device ?')
+            if proceed == True:
+                self.root.lift()                          
+                self.root.focus_force()
+                self.clear_entry()
             else:
-                self.txtvar.set('Please Input Hub and Spoke Ip Addresses')
-                self.config_collector(devices, COMMAND_LIST)
-                #print('stage0') #Collects data from devies
-                self.config_parser()
-                #print('stage1') # Parses data
-                spoke_jinja_cfg = Files_Constructor(r'/home/elil/Yml/SPOKE_DICT.yml')
-                #print("stage2") Calling Files_Constructor class for spoke rtr
-                hub_jinja_cfg = Files_Constructor(r'/home/elil/Yml/HUB_DICT.yml')
-                #print("stage3") Calling Files_Constructor class for hub rtr
-                spoke_jinja_cfg.create_yaml_file(bgp_dict, 'w')
-                #print("stage4") Configuring YAML file for Spoke
-                spoke_jinja_cfg.create_yaml_file(spoke_dict, 'a')
-                #print("stage5") Configuring YAML file for Spoke
-                hub_jinja_cfg.create_yaml_file(hub_dict, 'w')
-                #print("stage6") Configuring YAML file for Hub 
-                self.result1 = spoke_jinja_cfg.constructor(r"/home/elil/Templates/", r'child_spoke_config_j2')
-                #print("stage7") Create Spoke configuration template with Jinja2
-                self.result2 = hub_jinja_cfg.constructor(r"/home/elil/Templates/", r'hub_config_j2')
-                #print("stage8") # Create Hub configuration template with Jinja2
-                self.cfg_compile()
-                #print("stage8.5") # Send configuration to devices
-                threads_conn(send_config, devices, 2, self.cfg_list)
-                proceed = messagebox.askyesno(message='Spoke device is added to DmVpn cloud. Would you like to configure next device ?')
-                if proceed == True:
-                    self.root.lift()                          
-                    self.root.focus_force()
-                else:
-                    self.root.destroy()                          
-                return  Hub_IP, Spoke_IP
-        return flag
+                self.root.destroy()                          
+        return Hub_Ip, Spoke_Ip
+        
     
     def cfg_compile(self):
-        spoke_cfg = []    # define final config list for SPOKE
-        hub_cfg = []      # define final config list for HUB
-        [spoke_cfg.append(line) for line in self.result1.splitlines()] 
-        #print("stage7")  # SPOKE final configuration
-        [hub_cfg.append(line) for line in self.result2.splitlines()]   
-        #print("stage8")  # HUB final configuration
+        spoke_cfg = []    # define final config list for Spoke
+        hub_cfg = []      # define final config list for Hub
+        [spoke_cfg.append(line) for line in self.result1.splitlines()] # Spoke final configuration
+        [hub_cfg.append(line) for line in self.result2.splitlines()]   # Hub final configuration  
         self.cfg_list = [hub_cfg, spoke_cfg]
         return self.cfg_list 
-    
-    @staticmethod
-    def check_ip(ip):                   ##Function to chek ip adress sanity
-        try:
-            ipaddress.ip_address(ip)
-            return True
-        except ValueError as err:  
-            tk.messagebox.showerror(title="Input Error", message=err)
-            return False
-
+       
 class Files_Constructor():
     def __init__(self, yml_file_dict):
          self.yml_file_dict = yml_file_dict
             
     def constructor(self, file_dir, file_name):
-        self.myloader = FileSystemLoader(file_dir)
-        self.env = Environment(loader=self.myloader, trim_blocks=True, lstrip_blocks=True)
-        self.template = self.env.get_template(file_name)
-        self.var_dict = yaml.load(open(self.yml_file_dict), Loader = yaml.FullLoader)
-        self.output = self.template.render(self.var_dict)
+        try:
+            self.myloader = FileSystemLoader(file_dir)
+            self.env = Environment(loader=self.myloader, trim_blocks=True, lstrip_blocks=True)
+            self.template = self.env.get_template(file_name)
+            self.var_dict = yaml.load(open(self.yml_file_dict), Loader = yaml.FullLoader)
+            self.output = self.template.render(self.var_dict)
+        except Exception as err:
+            messagebox.showerror(title="Yaml error", message=err)
         return self.output
 
     def create_yaml_file(self, row_data, arg):

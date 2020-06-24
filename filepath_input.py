@@ -2,16 +2,19 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
+
 Data_Path = []
-__Params__ = ['Jinja Templates Directory', 'Jinja Base Template', 'Jinja Child Template', 'Hub Yaml File',  'Spoke Yaml File']
-__Gen__ = (num for num in _Params_[1:])
+_Params_ = ['Jinja Templates Directory', 'Jinja Base Template', 'Jinja Child Template', 'Hub Yaml File',  'Spoke Yaml File']
+_Gen_ = (num for num in _Params_[1:])
 
 class MainGUI(ttk.Frame):
     ''' Main GUI window '''
     def __init__(self, master):
         ''' Init main window '''
+
+        self.Flag = False
         ttk.Frame.__init__(self, master=master)
-        self.master.title('Main GUI')
+        self.master.title('Input Window')
         self.style = ttk.Style(master)
         self.style.configure('TFrame', background ='#e1d8a1')
         self.style.configure('TButton', background ='#b1d8b9')
@@ -46,6 +49,7 @@ class MainGUI(ttk.Frame):
    
         
     def submit_ip(self, event=None):
+        
         try:
             self.value = self.sv.get()
             print(self.value, self.prevalue)
@@ -53,13 +57,12 @@ class MainGUI(ttk.Frame):
                 Data_Path.append(self.value)
                 self.prevalue = self.value
                 self.clear_entry()
-                print(Data_Path)
                 self.txtvar.set(f'Please input "{next(_Gen_)}" ...')
-        except:
+                self.Flag = False
+        except StopIteration as err:
                 self.txtvar.set(f'Thank you ...')
-                self.clear_entry()
-                self.destroy_self()
-        return Data_Path
+                self.Flag = True
+        return Data_Path, self.Flag
   
     def destroy_self(self, event=None):
         self.master.destroy()
@@ -67,10 +70,5 @@ class MainGUI(ttk.Frame):
     def clear_entry(self):
         self.input_entry.delete(0, 'end')
 
-root = tk.Tk()
-feedback = MainGUI(root)
-root.mainloop()
-
-  
 
 

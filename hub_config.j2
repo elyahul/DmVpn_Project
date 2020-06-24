@@ -1,0 +1,10 @@
+
+router bgp 1
+ neighbor {{ tunnel_ip }} remote-as {{ as_number }}
+ neighbor {{ tunnel_ip }} default-originate
+ neighbor {{ tunnel_ip }} timers 5 20
+!
+ip route {{ spoke_subnet }} 255.255.255.252 10.107.1.1 
+
+
+

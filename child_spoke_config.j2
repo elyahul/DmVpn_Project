@@ -1,0 +1,17 @@
+{% extends 'base_spoke_config.j2' %}
+
+{% block bgp %}
+ neighbor 10.207.1.1 remote-as 1
+ neighbor 10.207.1.1 timers 5 20
+{% for neigbor in bgp %}
+ {% if neigbor.split()[1] != tunnel_ip %}
+{{ neigbor }}
+  {% set neigbor_asn = neigbor.split()[3] %}
+  {% if neigbor_asn |int  == as_number |int %}
+ neighbor {{ neigbor.split()[1] }} soft-reconfiguration inbound
+  {% endif %}
+ {% endif %}
+{% endfor %}
+{% endblock %}
+
+

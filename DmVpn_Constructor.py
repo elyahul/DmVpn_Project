@@ -13,6 +13,7 @@ from operator import itemgetter
 from threaded_ssh import send_config, threads_conn
 from pprint import pprint
 import logging
+import re
 
 
 logger = logging.getLogger("MyLog")
@@ -25,10 +26,10 @@ console.setFormatter(formatter)
 logger.addHandler(console)
 logger.setLevel(logging.INFO)
 
-HUB_IP = '10.1.1.1'
-SPOKE_IP = '10.102.10.2'
-##HUB_IP = input('#Enter HUB device ip address:  ')
-##SPOKE_IP = input('#Enter Spoke device ip address:  ')
+Hub_Ip = '10.1.1.1'
+Spoke_Ip = '10.102.10.2'
+##Hub_Ip = input('#Enter HUB device ip address:  ')
+##Spoke_Ip = input('#Enter Spoke device ip address:  ')
 COMMAND_LIST = [
         ('show run | s bgp'),
         ('show ip route',
@@ -93,9 +94,9 @@ def config_collector(params,commands):
             tk.messagebox,asqyescancel(message=err)
         except  NetMikoTimeoutException as err:
             tk.messagebox,asqyescancel(message=err)
-            
-    _value_list = []                ## define values list
-    _key_list = ['hub_bgp_list', 'sir_str' , 'sib_str', 'hostname'] ## define keys list
+    mq_dict = {}                                                     # zeroize dictionary        
+    _value_list = []                                                 # define values list
+    _key_list = ['hub_bgp_list', 'sir_str' , 'sib_str', 'hostname']  # define keys list
     while not queue.empty():
         _value_list.append(queue.get(timeout=2))
 
@@ -110,23 +111,28 @@ def config_parser():
         globals().update(mq_dict)
         
     ''' Get Data from Hub Configuration and create Yaml File '''
-    ([bgp_neigbors.append(line) for line in hub_bgp_list.splitlines()
-      if ('neighbor' and 'remote-as') in line])
+    ([bgp_neigbors.append(line) for line in mq_dict['hub_bgp_list'].splitlines()
+        if ('neighbor' and 'remote-as') in line])
 
     ''' Get Data from Spoke Configuration  and create dictionary for Yaml File '''
-    for line in sib_str.splitlines()[2:]:
+    for line in sib_str.splitlines()[1:]:
         iface,ip,*_,status,proto = line.split()
         if (ip != 'unassigned' and  (status and proto == 'up')) and ('Loop' not in iface):
-            octet2 = int(ip[3:6])+100
+##          octet2 = int(ip[3:6])+100
 ##          tunnel_ip = ip.replace(ip[3:6],str(octet2))
-            tunnel_ip = '10.{}.10.1'.format(octet2)
+##          tunnel_ip = '10.{}.10.1'.format(octet2)
+            tunnel_ip = ip.replace('10.1','10.2',1)                     # Gre Tunnel ip address
             asn = int(ip[5:6])*10
             interface = iface
         else:
-            network = ip
+            if not iface.startswith('T'):                              
+                        network = ip                                            # get local network to advertise through BGP 
     for line in sir_str.splitlines():
         if line.startswith('S*'):
             *junk,nexthop = line.split()
+    spoke_network_prefix = ipaddress.ip_network(Spoke_Ip +'/30', strict=False)     # get network address from "Spoke_Ip"
+    row_network = re.match("(\S+)/", spoke_network_prefix.with_prefixlen)          # get network address from "Spoke_Ip"
+    spoke_subnet = row_network.group(1)                                            # get network address from "Spoke_Ip"
     
     ''' Create Spoke dictionary for Yaml File '''
     spoke_dict = {'description': 'To_HUB',
@@ -134,16 +140,16 @@ def config_parser():
                   'tunnel_ip':tunnel_ip,
                   'network':network,
                   'interface':interface,
-                  'asn':asn,
+                  'as_number':asn,
                   'nexthop':nexthop}
 
     ''' Create Hub dictionary for Yaml File '''
-    as_number = int(SPOKE_IP.split('.')[1][2])*10    
-    hub_dict = {'SPOKE_IP': SPOKE_IP,
+    asn = int(ip[5:6])*10 
+    hub_dict = {'spoke_subnet': spoke_subnet,
                 'tunnel_ip': tunnel_ip,
-                'as_number': as_number}
+                'as_number': asn}
     print('## Finalizing configuration...')
-    return spoke_dict, hub_dict, bgp_dict, octet2, ip
+    return spoke_dict, hub_dict, bgp_dict
 
 if __name__ == '__main__':
     
@@ -153,9 +159,9 @@ if __name__ == '__main__':
     print("stage1")
     hub_jinja_cfg = Files_Constructor(r'/home/elil/Yml/HUB_DICT.yml')
     print("stage1.5")
-    result1 = spoke_jinja_cfg.constructor(r"/home/elil/Templates/", r'child_spoke_config_j2')
+    result1 = spoke_jinja_cfg.constructor(r"/home/elil/Templates/", r'child_spoke_config.j2')
     print("stage2")
-    result2 = hub_jinja_cfg.constructor(r"/home/elil/Templates/", r'hub_config_j2')
+    result2 = hub_jinja_cfg.constructor(r"/home/elil/Templates/", r'hub_config.j2')
     print("stage3")
     spoke_jinja_cfg.create_yaml_file(bgp_dict, 'w')
     print("stage4")
@@ -172,6 +178,6 @@ if __name__ == '__main__':
     print("stage8")
     cfg_list = [hub_cfg, spoke_cfg]
     threads_conn(send_config, devices, 2, cfg_list)
-##    print(cfg_list)
+##  print(cfg_list)
 
     

@@ -66,7 +66,7 @@ class MainFrame():
         self.root.bind("<KP_Enter>", func=self.submit_ip)
         self.root.mainloop()
         
-    @staticmethod                       # function to chek ip adress sanity
+    @staticmethod                       # function to check ip address sanity
     def check_ip(ip):                   
         try:
             ipaddress.ip_address(ip)
